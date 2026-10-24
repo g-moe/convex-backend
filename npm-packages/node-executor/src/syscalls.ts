@@ -567,6 +567,8 @@ export class SyscallsImpl {
           return JSON.stringify(await this.syscallCancelJob(jsonArgs));
         case "1.0/getUserIdentity":
           return JSON.stringify(this.syscallGetUserIdentity(jsonArgs));
+        case "1.0/isAuthenticated":
+          return JSON.stringify(this.syscallIsAuthenticated(jsonArgs));
         case "1.0/storageGenerateUploadUrl": {
           return JSON.stringify(
             await this.syscallStorageGenerateUploadUrl(jsonArgs),
@@ -943,6 +945,11 @@ export class SyscallsImpl {
   syscallGetUserIdentity(rawArgs: string): JSONValue {
     this.validateArgs(rawArgs, z.any(), "get user identity");
     return this.userIdentity as JSONValue;
+  }
+
+  syscallIsAuthenticated(rawArgs: string): JSONValue {
+    this.validateArgs(rawArgs, z.any(), "is authenticated");
+    return this.userIdentity !== null;
   }
 
   async syscallStorageGenerateUploadUrl(rawArgs: string): Promise<JSONValue> {

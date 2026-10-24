@@ -15,6 +15,7 @@ use common::{
         ComponentId,
     },
     document::ParsedDocument,
+    identity::ObservedIdentity,
     runtime::{
         Runtime,
         UnixTimestamp,
@@ -107,7 +108,7 @@ enum UdfPreloaded {
         unix_timestamp: Option<UnixTimestamp>,
         observed_time_during_execution: bool,
         performance_api: Option<PerformanceApi>,
-        observed_identity_during_execution: bool,
+        observed_identity_during_execution: ObservedIdentity,
         default_system_env_vars: BTreeMap<EnvVarName, EnvVarValue>,
         env_vars: PreloadedEnvVars,
         component: ComponentId,
@@ -225,7 +226,7 @@ impl<RT: Runtime> UdfPhase<RT> {
                     unix_timestamp,
                     observed_time_during_execution: false,
                     performance_api: unix_timestamp.map(PerformanceApi::new),
-                    observed_identity_during_execution: false,
+                    observed_identity_during_execution: ObservedIdentity::Unobserved,
                     default_system_env_vars,
                     env_vars,
                     component,
@@ -603,7 +604,9 @@ impl<RT: Runtime> UdfPhase<RT> {
         }
     }
 
-    pub fn observe_identity(&mut self) -> anyhow::Result<()> {
+    /// Records how much of the caller's identity the UDF observed, keeping
+    /// the most specific observation so far.
+    pub fn observe_identity(&mut self, observed: ObservedIdentity) -> anyhow::Result<()> {
         let UdfPreloaded::Ready {
             ref mut observed_identity_during_execution,
             ..
@@ -611,7 +614,7 @@ impl<RT: Runtime> UdfPhase<RT> {
         else {
             anyhow::bail!("Phase not initialized");
         };
-        *observed_identity_during_execution = true;
+        *observed_identity_during_execution = (*observed_identity_during_execution).max(observed);
         Ok(())
     }
 
@@ -635,13 +638,13 @@ impl<RT: Runtime> UdfPhase<RT> {
         }
     }
 
-    pub fn observed_identity(&self) -> bool {
+    pub fn observed_identity(&self) -> ObservedIdentity {
         match self.preloaded {
             UdfPreloaded::Ready {
                 observed_identity_during_execution,
                 ..
             } => observed_identity_during_execution,
-            UdfPreloaded::Created { .. } => false,
+            UdfPreloaded::Created { .. } => ObservedIdentity::Unobserved,
         }
     }
 

@@ -4,6 +4,7 @@ use std::str::FromStr;
 
 use anyhow::Context;
 use common::{
+    identity::ObservedIdentity,
     query::Query,
     runtime::Runtime,
     static_span,
@@ -111,7 +112,7 @@ impl<RT: Runtime> SyscallProviderInternal<RT> for DatabaseUdfSyscallProvider<RT>
     }
 
     fn require_operation(&mut self, op: DeploymentOp) -> anyhow::Result<()> {
-        self.phase.observe_identity()?;
+        self.phase.observe_identity(ObservedIdentity::Full)?;
         self.phase.tx()?.identity().require_operation(op)
     }
 

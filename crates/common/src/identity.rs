@@ -104,6 +104,21 @@ pub enum IdentityCacheKey {
     User(Arc<UserIdentityAttributes>),
 }
 
+impl IdentityCacheKey {
+    /// Whether `ctx.auth.isAuthenticated()` returns true for this identity,
+    /// i.e. whether `ctx.auth.getUserIdentity()` returns a user. Both
+    /// `Identity::User` and `Identity::ActingUser` map to
+    /// `IdentityCacheKey::User`.
+    pub fn is_authenticated(&self) -> bool {
+        match self {
+            IdentityCacheKey::User(_) => true,
+            IdentityCacheKey::DeploymentAdmin { .. }
+            | IdentityCacheKey::System
+            | IdentityCacheKey::Unknown(_) => false,
+        }
+    }
+}
+
 impl HeapSize for IdentityCacheKey {
     fn heap_size(&self) -> usize {
         match self {
@@ -120,6 +135,25 @@ impl HeapSize for IdentityCacheKey {
             IdentityCacheKey::User(u) => u.heap_size(),
         }
     }
+}
+
+/// How much of the caller's identity a function observed through `ctx.auth`.
+/// This determines how specifically a query result is keyed in the query
+/// cache.
+///
+/// Variants are ordered from least to most specific, so combining two
+/// observations (e.g. from a nested UDF) keeps the maximum.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Ord, PartialOrd)]
+pub enum ObservedIdentity {
+    /// The function did not observe the identity.
+    #[default]
+    Unobserved,
+    /// The function only observed whether the caller is authenticated, with
+    /// `ctx.auth.isAuthenticated()`.
+    Authentication,
+    /// The function observed the caller's full identity, e.g. with
+    /// `ctx.auth.getUserIdentity()`.
+    Full,
 }
 
 impl FromStr for InertIdentity {

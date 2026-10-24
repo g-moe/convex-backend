@@ -18,6 +18,7 @@ use common::{
         Resource,
     },
     document::DeveloperDocument,
+    identity::ObservedIdentity,
     knobs::{
         COMPONENT_GET_USER_IDENTITY_LOG_SAMPLE_RATIO,
         MAX_REACTOR_CALL_DEPTH,
@@ -780,13 +781,11 @@ impl<RT: Runtime> DatabaseUdfSyscallProvider<RT> {
         log_run_udf(
             self.udf_type,
             execution_type,
-            self.phase.observed_identity(),
-            observed_identity,
+            self.phase.observed_identity() != ObservedIdentity::Unobserved,
+            observed_identity != ObservedIdentity::Unobserved,
         );
 
-        if observed_identity {
-            self.phase.observe_identity()?;
-        }
+        self.phase.observe_identity(observed_identity)?;
 
         if observed_rng {
             self.phase.observe_rng();
@@ -896,6 +895,7 @@ pub(super) async fn run_async_syscall_batch<RT: Runtime>(
                 "1.0/getRequestMetadata" => request_metadata(provider),
                 // Auth
                 "1.0/getUserIdentity" => Box::pin(get_user_identity(provider, args)).await,
+                "1.0/isAuthenticated" => is_authenticated(provider),
                 "1.0/signJwt" => Box::pin(sign_deployment_jwt(provider, args)).await,
                 // Storage
                 "1.0/storageDelete" => Box::pin(storage_delete(provider, args)).await,
@@ -1043,7 +1043,7 @@ fn request_metadata<RT: Runtime>(
     // Expose the raw auth JWT the request was authenticated with, if any. Only
     // `User` identities carry a JWT (an OIDC or custom JWT); admin keys and
     // logged-out requests have no token.
-    provider.phase.observe_identity()?;
+    provider.phase.observe_identity(ObservedIdentity::Full)?;
     let auth_token = match provider.phase.tx()?.authentication_token() {
         AuthenticationToken::User(token) => Some(token),
         AuthenticationToken::Admin(..) | AuthenticationToken::None => None,
@@ -1112,7 +1112,7 @@ async fn get_user_identity<RT: Runtime>(
     provider: &mut DatabaseUdfSyscallProvider<RT>,
     _args: JsonValue,
 ) -> anyhow::Result<Box<RawValue>> {
-    provider.phase.observe_identity()?;
+    provider.phase.observe_identity(ObservedIdentity::Full)?;
     // TODO: Somehow make the Transaction aware of the dependency on the user.
     let component = provider.phase.component()?;
     let tx = provider.phase.tx()?;
@@ -1139,6 +1139,20 @@ async fn get_user_identity<RT: Runtime>(
     }
 
     Ok(RawValue::NULL.to_owned())
+}
+
+/// Returns whether `ctx.auth.getUserIdentity()` would return a user, while
+/// only observing whether the caller is authenticated. This lets the query
+/// cache share a result across all authenticated callers instead of keying it
+/// by each caller's identity.
+fn is_authenticated<RT: Runtime>(
+    provider: &mut DatabaseUdfSyscallProvider<RT>,
+) -> anyhow::Result<Box<RawValue>> {
+    provider
+        .phase
+        .observe_identity(ObservedIdentity::Authentication)?;
+    let is_authenticated = provider.phase.tx()?.user_identity().is_some();
+    Ok(serde_json::value::to_raw_value(&is_authenticated)?)
 }
 
 /// Syscall for JWT signing in mutations.

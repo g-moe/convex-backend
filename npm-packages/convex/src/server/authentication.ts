@@ -234,6 +234,22 @@ export interface Auth {
    * + `throw` on HTTP Actions.
    */
   getUserIdentity(): Promise<UserIdentity | null>;
+
+  /**
+   * Check whether the current user is authenticated, without reading who
+   * they are.
+   *
+   * Use this in queries that only need to require a logged-in user. A query
+   * that calls {@link Auth.getUserIdentity} is cached separately for each
+   * user, while a query that only calls `isAuthenticated` is cached once and
+   * shared by all authenticated users.
+   *
+   * @returns A promise that resolves to `true` when
+   * {@link Auth.getUserIdentity} would return a {@link UserIdentity}, and
+   * `false` when it would return `null`. Like `getUserIdentity`, it throws on
+   * HTTP Actions called with an invalid ID token.
+   */
+  isAuthenticated(): Promise<boolean>;
 }
 
 /**

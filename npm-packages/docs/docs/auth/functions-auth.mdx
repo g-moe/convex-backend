@@ -21,6 +21,30 @@ about the currently logged-in user by using the
 
 <Snippet source={Example} title="convex/myFunctions.ts" />
 
+## Requiring authentication in queries
+
+Convex
+[caches query results](/functions/query-functions.mdx#caching--reactivity--consistency),
+and a query that calls `getUserIdentity` is cached separately for each user. If
+a query only needs to know that the user is logged in, call
+[`ctx.auth.isAuthenticated()`](/api/interfaces/server.Auth#isauthenticated)
+instead. It returns `true` exactly when `getUserIdentity` would return an
+identity, and the query's result is cached once for all authenticated users:
+
+```ts title="convex/announcements.ts"
+import { query } from "./_generated/server";
+
+export const list = query({
+  args: {},
+  handler: async (ctx) => {
+    if (!(await ctx.auth.isAuthenticated())) {
+      throw new Error("Unauthenticated call to query");
+    }
+    return await ctx.db.query("announcements").collect();
+  },
+});
+```
+
 ## User identity fields
 
 The [UserIdentity](/api/interfaces/server.UserIdentity) object returned by

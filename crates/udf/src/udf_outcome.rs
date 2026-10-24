@@ -8,7 +8,10 @@ use common::{
     },
     components::CanonicalizedComponentFunctionPath,
     errors::JsError,
-    identity::InertIdentity,
+    identity::{
+        InertIdentity,
+        ObservedIdentity,
+    },
     log_lines::{
         LogLine,
         LogLines,
@@ -44,7 +47,7 @@ pub struct UdfOutcome {
     pub path: CanonicalizedComponentFunctionPath,
     pub arguments: SerializedArgs,
     pub identity: InertIdentity,
-    pub observed_identity: bool,
+    pub observed_identity: ObservedIdentity,
 
     pub rng_seed: [u8; 32],
     pub observed_rng: bool,
@@ -85,7 +88,7 @@ impl HeapSize for UdfOutcome {
 
 #[derive(Debug, Clone)]
 pub struct NestedUdfOutcome {
-    pub observed_identity: bool,
+    pub observed_identity: ObservedIdentity,
     pub observed_rng: bool,
     pub observed_time: bool,
     pub log_lines: LogLines,
@@ -122,6 +125,11 @@ impl TryFrom<UdfOutcome> for UdfOutcomeProto {
             Ok(value) => FunctionResultTypeProto::JsonPackedValue(value.as_str().to_string()),
             Err(js_error) => FunctionResultTypeProto::JsError(js_error.try_into()?),
         };
+        let (observed_identity, observed_only_authentication) = match observed_identity {
+            ObservedIdentity::Unobserved => (false, false),
+            ObservedIdentity::Authentication => (true, true),
+            ObservedIdentity::Full => (true, false),
+        };
         Ok(Self {
             rng_seed: Some(rng_seed.to_vec()),
             observed_rng: Some(observed_rng),
@@ -135,6 +143,7 @@ impl TryFrom<UdfOutcome> for UdfOutcomeProto {
             }),
             syscall_trace: Some(syscall_trace.try_into()?),
             observed_identity: Some(observed_identity),
+            observed_only_authentication: Some(observed_only_authentication),
             memory_in_mb,
             user_execution_time: user_execution_time.map(|t| t.try_into()).transpose()?,
         })
@@ -166,7 +175,7 @@ impl UdfOutcome {
             result: Err(js_error),
             syscall_trace: SyscallTrace::new(),
             udf_server_version,
-            observed_identity: false,
+            observed_identity: ObservedIdentity::Unobserved,
             memory_in_mb: 0,
             user_execution_time: Some(Duration::ZERO),
         })
@@ -186,6 +195,7 @@ impl UdfOutcome {
             observed_identity,
             memory_in_mb,
             user_execution_time,
+            observed_only_authentication,
         }: UdfOutcomeProto,
         path_and_args: ValidatedPathAndArgs,
         identity: InertIdentity,
@@ -209,6 +219,17 @@ impl UdfOutcome {
             .into_iter()
             .map(AuditLogLine::try_from)
             .try_collect()?;
+        let observed_identity = match (
+            observed_identity.context("Missing identity")?,
+            observed_only_authentication.unwrap_or_default(),
+        ) {
+            (false, false) => ObservedIdentity::Unobserved,
+            (true, true) => ObservedIdentity::Authentication,
+            (true, false) => ObservedIdentity::Full,
+            (false, true) => {
+                anyhow::bail!("observed_only_authentication requires observed_identity")
+            },
+        };
         Ok(Self {
             path: path.for_logging(),
             arguments,
@@ -225,7 +246,7 @@ impl UdfOutcome {
             result,
             syscall_trace: syscall_trace.context("Missing syscall_trace")?.try_into()?,
             udf_server_version,
-            observed_identity: observed_identity.context("Missing identity")?,
+            observed_identity,
             memory_in_mb,
             user_execution_time: user_execution_time.map(|d| d.try_into()).transpose()?,
         })
