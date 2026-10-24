@@ -30,11 +30,18 @@ message UdfOutcome {
   common.FunctionResult result = 7;
   SyscallTrace syscall_trace = 8;
 
+  // Set whenever the function observed the identity at all, so readers that
+  // predate `observed_only_authentication` key the result by the full
+  // identity rather than sharing it across callers.
   optional bool observed_identity = 10;
   uint64 memory_in_mb = 11;
   optional google.protobuf.Duration user_execution_time = 12;
 
   repeated AuditLogLine audit_log_lines = 13;
+
+  // Set when the function only observed whether the caller is authenticated
+  // (`ctx.auth.isAuthenticated()`). Requires `observed_identity`.
+  optional bool observed_only_authentication = 14;
 }
 
 message ActionOutcome {

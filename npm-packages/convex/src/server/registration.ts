@@ -232,6 +232,10 @@ export interface GenericQueryCtx<DataModel extends GenericDataModel> {
    *
    * Call `await ctx.auth.getUserIdentity()` to get the current user's identity,
    * or `null` if the user is not authenticated.
+   *
+   * Call `await ctx.auth.isAuthenticated()` to only check whether the user is
+   * authenticated, which lets the query's result be cached for all
+   * authenticated users instead of for each user.
    */
   auth: Auth;
 

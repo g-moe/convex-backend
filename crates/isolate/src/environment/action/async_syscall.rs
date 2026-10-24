@@ -81,6 +81,7 @@ impl<RT: Runtime> TaskExecutor<RT> {
                 "1.0/getDeploymentMetadata" => self.async_syscall_getDeploymentMetadata()?.into(),
                 "1.0/getRequestMetadata" => self.async_syscall_getRequestMetadata()?.into(),
                 "1.0/getUserIdentity" => self.async_syscall_getUserIdentity(args).await?.into(),
+                "1.0/isAuthenticated" => self.async_syscall_isAuthenticated()?.into(),
                 "1.0/storageDelete" => self.async_syscall_storageDelete(args).await?.into(),
                 "1.0/storageGetMetadata" => {
                     self.async_syscall_storageGetMetadata(args).await?.into()
@@ -451,6 +452,11 @@ impl<RT: Runtime> TaskExecutor<RT> {
     #[convex_macro::instrument_future]
     async fn async_syscall_getUserIdentity(&self, _args: JsonValue) -> anyhow::Result<JsonValue> {
         self.user_identity()
+    }
+
+    fn async_syscall_isAuthenticated(&self) -> anyhow::Result<JsonValue> {
+        let is_authenticated = !self.user_identity()?.is_null();
+        Ok(JsonValue::Bool(is_authenticated))
     }
 
     async fn async_syscall_storageGenerateUploadUrl(

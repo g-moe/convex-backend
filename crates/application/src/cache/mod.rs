@@ -30,7 +30,10 @@ use common::{
         ExecutionContext,
         RequestContext,
     },
-    identity::IdentityCacheKey,
+    identity::{
+        IdentityCacheKey,
+        ObservedIdentity,
+    },
     knobs::{
         DATABASE_UDF_SYSTEM_TIMEOUT,
         DATABASE_UDF_USER_TIMEOUT,
@@ -148,7 +151,9 @@ impl QueryCacheTenantId {
 /// It may have more specific information than a `StoredCacheKey`, because
 /// multiple query requests may be served by the same cache entry.
 /// e.g. if a query does not check `ctx.auth`, then `RequestedCacheKey`
-/// contains the identity, but `StoredCacheKey` does not.
+/// contains the identity, but `StoredCacheKey` does not. If a query only
+/// checks `ctx.auth.isAuthenticated()`, `StoredCacheKey` only contains whether
+/// the caller is authenticated.
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct RequestedCacheKey {
     tenant_id: QueryCacheTenantId,
@@ -164,24 +169,33 @@ impl RequestedCacheKey {
     fn _possible_cache_keys(&self) -> Vec<StoredCacheKey> {
         vec![
             self.precise_cache_key(),
-            StoredCacheKey {
-                tenant_id: self.tenant_id,
-                path: self.path.clone(),
-                args: self.args.clone(),
-                // Include queries that did not read `ctx.auth`.
-                identity: None,
-                journal: self.journal.clone(),
-                allowed_visibility: self.allowed_visibility,
-            },
+            // Include queries that only checked whether the caller is
+            // authenticated.
+            self.stored_cache_key(ObservedIdentity::Authentication),
+            // Include queries that did not read `ctx.auth`.
+            self.stored_cache_key(ObservedIdentity::Unobserved),
         ]
     }
 
     fn precise_cache_key(&self) -> StoredCacheKey {
+        self.stored_cache_key(ObservedIdentity::Full)
+    }
+
+    /// The key for a result that observed `observed_identity` of this
+    /// request's identity.
+    fn stored_cache_key(&self, observed_identity: ObservedIdentity) -> StoredCacheKey {
+        let identity = match observed_identity {
+            ObservedIdentity::Unobserved => StoredIdentity::Unobserved,
+            ObservedIdentity::Authentication => StoredIdentity::Authentication {
+                is_authenticated: self.identity.is_authenticated(),
+            },
+            ObservedIdentity::Full => StoredIdentity::Full(self.identity.clone()),
+        };
         StoredCacheKey {
             tenant_id: self.tenant_id,
             path: self.path.clone(),
             args: self.args.clone(),
-            identity: Some(self.identity.clone()),
+            identity,
             journal: self.journal.clone(),
             allowed_visibility: self.allowed_visibility,
         }
@@ -206,19 +220,7 @@ impl RequestedCacheKey {
     }
 
     fn cache_keys_after_execution(&self, outcome: &UdfOutcome) -> SmallVec<[StoredCacheKey; 2]> {
-        let identity = if outcome.observed_identity {
-            Some(self.identity.clone())
-        } else {
-            None
-        };
-        let key = StoredCacheKey {
-            tenant_id: self.tenant_id,
-            path: self.path.clone(),
-            args: self.args.clone(),
-            identity,
-            journal: self.journal.clone(),
-            allowed_visibility: self.allowed_visibility,
-        };
+        let key = self.stored_cache_key(outcome.observed_identity);
         if self.journal != outcome.journal {
             // Record the result under *both* the original journal and the new
             // journal, as we expect re-executing the query with
@@ -246,14 +248,35 @@ impl RequestedCacheKey {
     }
 }
 
+/// The part of the caller's identity that a persisted query result depends
+/// on, from [`ObservedIdentity`].
+#[derive(Clone, Eq, PartialEq, Hash, Debug)]
+enum StoredIdentity {
+    /// The query did not read `ctx.auth`.
+    Unobserved,
+    /// The query only checked whether the caller is authenticated, so the
+    /// result is shared by all callers with the same `is_authenticated`.
+    Authentication { is_authenticated: bool },
+    /// The query read the caller's identity.
+    Full(IdentityCacheKey),
+}
+
+impl HeapSize for StoredIdentity {
+    fn heap_size(&self) -> usize {
+        match self {
+            StoredIdentity::Unobserved | StoredIdentity::Authentication { .. } => 0,
+            StoredIdentity::Full(identity) => identity.heap_size(),
+        }
+    }
+}
+
 /// A cache key representing a persisted query result.
 #[derive(Clone, Eq, PartialEq, Hash, Debug)]
 pub struct StoredCacheKey {
     tenant_id: QueryCacheTenantId,
     path: PublicFunctionPath,
     args: SerializedArgs,
-    // None means that the query did not read `ctx.auth`.
-    identity: Option<IdentityCacheKey>,
+    identity: StoredIdentity,
     journal: QueryJournal,
     allowed_visibility: AllowedVisibility,
 }
@@ -404,8 +427,8 @@ impl<RT: Runtime> CacheManager<RT> {
         let context = ExecutionContext::new(request_context, &caller);
         // If the query exists at some cache key, but the cached entry is invalid,
         // create a Waiting entry at that key, even if it's not the most precise for the
-        // request. e.g. if the query was cached with identity:None, create a
-        // Waiting entry with identity:None so other queries with other
+        // request. e.g. if the query was cached with an unobserved identity, create a
+        // Waiting entry with an unobserved identity so other queries with other
         // identities will wait for us to finish. This requires keeping
         // `stored_key_hint` across iterations, since finding an invalid key
         // removes it from the cache and continues the loop.

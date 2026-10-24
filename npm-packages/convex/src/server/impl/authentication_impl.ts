@@ -9,6 +9,11 @@ export function setupAuth(requestId: string): Auth {
         requestId,
       });
     },
+    isAuthenticated: async () => {
+      return await performAsyncSyscall("1.0/isAuthenticated", {
+        requestId,
+      });
+    },
   };
 }
 
